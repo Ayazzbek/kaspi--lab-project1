@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="ru" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="layout :: head"></head>
+<body>
+<div th:replace="layout :: body">
+    <div th:fragment="content">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-body">
+                        <h3 class="card-title mb-4">
+                            <i class="bi bi-clock-history me-2"></i>
+                            Проверка статуса загрузки
+                        </h3>
+
+                        <div class="mb-4">
+                            <form id="statusForm" class="row g-3">
+                                <div class="col-md-6">
+                                    <label for="statusClientId" class="form-label">
+                                        <i class="bi bi-person-badge me-2"></i>
+                                        Client ID *
+                                    </label>
+                                    <input type="text" class="form-control" id="statusClientId"
+                                           placeholder="my-app" required>
+                                </div>
+
+                                <div class="col-md-6">
+                                    <label for="statusUploadRequestId" class="form-label">
+                                        <i class="bi bi-hash me-2"></i>
+                                        Upload Request ID *
+                                    </label>
+                                    <input type="text" class="form-control" id="statusUploadRequestId"
+                                           placeholder="Введите ID запроса" required>
+                                    <div class="form-text">
+                                        ID, который вы получили при запуске загрузки
+                                    </div>
+                                </div>
+
+                                <div class="col-12">
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="bi bi-search me-2"></i>
+                                        Проверить статус
+                                    </button>
+
+                                    <button type="button" class="btn btn-outline-secondary ms-2"
+                                            onclick="checkRecentUploads()">
+                                        <i class="bi bi-list-ul me-2"></i>
+                                        Последние загрузки
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- Результат проверки -->
+                        <div id="statusResult" class="d-none">
+                            <div class="card border-primary">
+                                <div class="card-header bg-primary text-white">
+                                    <h5 class="mb-0">
+                                        <i class="bi bi-info-circle me-2"></i>
+                                        Статус загрузки
+                                    </h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row mb-3">
+                                        <div class="col-md-6">
+                                            <strong>ID запроса:</strong><br>
+                                            <code id="resultRequestId"></code>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Статус:</strong><br>
+                                            <span id="resultStatus" class="status-badge"></span>
+                                        </div>
+                                    </div>
+
+                                    <div class="row mb-3">
+                                        <div class="col-md-6">
+                                            <strong>Файл:</strong><br>
+                                            <span id="resultFilename"></span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Размер:</strong><br>
+                                            <span id="resultFilesize"></span>
+                                        </div>
+                                    </div>
+
+                                    <div class="progress progress-bar-custom mb-3">
+                                        <div id="resultProgress" class="progress-bar"
+                                             role="progressbar" style="width: 0%"></div>
+                                    </div>
+
+                                    <div id="resultDetails"></div>
+
+                                    <div id="completedInfo" class="d-none">
+                                        <hr>
+                                        <div class="alert alert-success">
+                                            <i class="bi bi-check-circle me-2"></i>
+                                            Файл успешно загружен!
+                                        </div>
+                                        <div class="d-grid gap-2">
+                                            <button id="downloadBtn" class="btn btn-success">
+                                                <i class="bi bi-download me-2"></i>
+                                                Скачать файл
+                                            </button>
+                                            <button id="getUrlBtn" class="btn btn-outline-success">
+                                                <i class="bi bi-link me-2"></i>
+                                                Получить ссылку для скачивания
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- История статусов -->
+                            <div id="statusHistory" class="mt-3">
+                                <h6>История обновлений:</h6>
+                                <div id="statusTimeline"></div>
+                            </div>
+                        </div>
+
+                        <!-- Последние загрузки -->
+                        <div id="recentUploads" class="mt-4 d-none">
+                            <h5 class="mb-3">Последние загрузки</h5>
+                            <div id="recentList" class="list-group">
+                                <!-- Список будет заполнен динамически -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Скрипты -->
+    <div th:fragment="scripts">
+        <script>
+            // Обработка формы проверки статуса
+            document.getElementById('statusForm').addEventListener('submit', async function(e) {
+                e.preventDefault();
+
+                const clientId = document.getElementById('statusClientId').value.trim();
+                const uploadRequestId = document.getElementById('statusUploadRequestId').value.trim();
+
+                if (!clientId || !uploadRequestId) {
+                    showAlert('Заполните все поля', 'warning');
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`/api/v1/files/${uploadRequestId}/status?clientId=${encodeURIComponent(clientId)}`);
+
+                    if (response.ok) {
+                        const status = await response.json();
+                        displayStatusResult(status);
+
+                        // Если файл загружен, настраиваем кнопку скачивания
+                        if (status.status === 'COMPLETED' && status.fileMetadataId) {
+                            document.getElementById('downloadBtn').onclick = function() {
+                                window.open(`/api/v1/files/${status.fileMetadataId}/download?clientId=${encodeURIComponent(clientId)}`, '_blank');
+                            };
+
+                            document.getElementById('getUrlBtn').onclick = function() {
+                                getDownloadUrl(status.fileMetadataId, clientId);
+                            };
+
+                            document.getElementById('completedInfo').classList.remove('d-none');
+                        } else {
+                            document.getElementById('completedInfo').classList.add('d-none');
+
+                            // Если не завершено, опрашиваем статус каждые 5 секунд
+                            if (status.status === 'PENDING' || status.status === 'PROCESSING') {
+                                setTimeout(() => {
+                                    document.getElementById('statusForm').dispatchEvent(new Event('submit'));
+                                }, 5000);
+                            }
+                        }
+                    } else if (response.status === 404) {
+                        showAlert('Запрос не найден', 'warning');
+                    } else {
+                        throw new Error('Ошибка при проверке статуса');
+                    }
+
+                } catch (error) {
+                    showAlert('Ошибка: ' + error.message, 'danger');
+                    console.error('Status check error:', error);
+                }
+            });
+
+            // Отображение результата статуса
+            function displayStatusResult(status) {
+                // Показываем секцию результата
+                document.getElementById('statusResult').classList.remove('d-none');
+
+                // Заполняем данные
+                document.getElementById('resultRequestId').textContent = status.uploadRequestId;
+                document.getElementById('resultFilename').textContent = status.originalFilename || 'N/A';
+                document.getElementById('resultFilesize').textContent = status.fileSize ? formatFileSize(status.fileSize) : 'N/A';
+
+                // Статус с цветом
+                const statusElement = document.getElementById('resultStatus');
+                statusElement.textContent = status.status;
+                statusElement.className = 'status-badge';
+
+                switch (status.status) {
+                    case 'PENDING':
+                        statusElement.classList.add('status-pending');
+                        break;
+                    case 'PROCESSING':
+                        statusElement.classList.add('status-processing');
+                        break;
+                    case 'COMPLETED':
+                        statusElement.classList.add('status-completed');
+                        break;
+                    case 'FAILED':
+                        statusElement.classList.add('status-failed');
+                        break;
+                    case 'CANCELLED':
+                        statusElement.classList.add('status-cancelled');
+                        break;
+                }
+
+                // Прогресс
+                const progress = status.progress || 0;
+                const progressBar = document.getElementById('resultProgress');
+                progressBar.style.width = progress + '%';
+                progressBar.textContent = progress + '%';
+                progressBar.setAttribute('aria-valuenow', progress);
+
+                // Детали
+                const detailsHtml = `
+                        <div class="row">
+                            <div class="col-md-4">
+                                <strong>Сообщение:</strong><br>
+                                ${status.message || 'Нет информации'}
+                            </div>
+                            <div class="col-md-4">
+                                <strong>Попыток:</strong><br>
+                                ${status.attemptCount || 0}
+                            </div>
+                            <div class="col-md-4">
+                                <strong>Создан:</strong><br>
+                                ${formatDate(status.createdAt)}
+                            </div>
+                        </div>
+                        ${status.updatedAt ? `
+                            <div class="row mt-2">
+                                <div class="col-md-12">
+                                    <strong>Обновлён:</strong> ${formatDate(status.updatedAt)}
+                                </div>
+                            </div>
+                        ` : ''}
+                    `;
+
+                document.getElementById('resultDetails').innerHTML = detailsHtml;
+
+                // История (заглушка - в реальности нужно получать из API)
+                const timelineHtml = `
+                        <div class="d-flex">
+                            <div class="flex-shrink-0">
+                                <i class="bi bi-circle-fill text-primary"></i>
+                            </div>
+                            <div class="flex-grow-1 ms-3">
+                                <strong>Создан</strong><br>
+                                <small>${formatDate(status.createdAt)}</small>
+                            </div>
+                        </div>
+                        ${status.updatedAt ? `
+                            <div class="d-flex mt-2">
+                                <div class="flex-shrink-0">
+                                    <i class="bi bi-circle-fill text-info"></i>
+                                </div>
+                                <div class="flex-grow-1 ms-3">
+                                    <strong>Обновлён</strong><br>
+                                    <small>${formatDate(status.updatedAt)}</small>
+                                </div>
+                            </div>
+                        ` : ''}
+                    `;
+
+                document.getElementById('statusTimeline').innerHTML = timelineHtml;
+            }
+
+            // Получение ссылки для скачивания
+            async function getDownloadUrl(fileMetadataId, clientId) {
+                try {
+                    const response = await fetch(`/api/v1/files/${fileMetadataId}/url?clientId=${encodeURIComponent(clientId)}&expirationMinutes=60`);
+
+                    if (response.ok) {
+                        const result = await response.json();
+
+                        // Показываем модальное окно со ссылкой
+                        const modalHtml = `
+                                <div class="modal" tabindex="-1" id="urlModal">
+                                    <div class="modal-dialog">
+                                        <div class="modal-content">
+                                            <div class="modal-header">
+                                                <h5 class="modal-title">
+                                                    <i class="bi bi-link me-2"></i>
+                                                    Ссылка для скачивания
+                                                </h5>
+                                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <p>Ссылка действительна 60 минут:</p>
+                                                <div class="input-group mb-3">
+                                                    <input type="text" class="form-control" id="urlInput"
+                                                           value="${result.url}" readonly>
+                                                    <button class="btn btn-outline-secondary" type="button"
+                                                            onclick="copyToClipboard('${result.url}')">
+                                                        <i class="bi bi-clipboard"></i>
+                                                    </button>
+                                                </div>
+                                                <p class="small text-muted">
+                                                    <i class="bi bi-clock"></i>
+                                                    Действительна до: ${result.expiresAt}
+                                                </p>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <a href="${result.url}" class="btn btn-success"
+                                                   target="_blank" download>
+                                                    <i class="bi bi-download me-2"></i>
+                                                    Скачать
+                                                </a>
+                                                <button type="button" class="btn btn-secondary"
+                                                        data-bs-dismiss="modal">Закрыть</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+
+                        // Добавляем модальное окно в DOM
+                        document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+                        // Показываем модальное окно
+                        const modal = new bootstrap.Modal(document.getElementById('urlModal'));
+                        modal.show();
+
+                        // Удаляем модальное окно после скрытия
+                        document.getElementById('urlModal').addEventListener('hidden.bs.modal', function() {
+                            this.remove();
+                        });
+
+                    } else {
+                        throw new Error('Не удалось получить ссылку');
+                    }
+
+                } catch (error) {
+                    showAlert('Ошибка при получении ссылки: ' + error.message, 'danger');
+                }
+            }
+
+            // Проверка последних загрузок (заглушка)
+            async function checkRecentUploads() {
+                const clientId = document.getElementById('statusClientId').value.trim();
+
+                if (!clientId) {
+                    showAlert('Введите Client ID для поиска', 'warning');
+                    return;
+                }
+
+                // В реальном приложении здесь был бы API вызов
+                showAlert('Функция поиска последних загрузок в разработке', 'info');
+
+                // Заглушка с примером данных
+                const recentList = document.getElementById('recentList');
+                recentList.innerHTML = `
+                        <div class="list-group-item">
+                            <div class="d-flex w-100 justify-content-between">
+                                <h6 class="mb-1">example-file.pdf</h6>
+                                <small class="text-success">COMPLETED</small>
+                            </div>
+                            <p class="mb-1 small">ID: abc123 • 2.4 MB</p>
+                            <small>Загружен 2 часа назад</small>
+                        </div>
+                        <div class="list-group-item">
+                            <div class="d-flex w-100 justify-content-between">
+                                <h6 class="mb-1">image.jpg</h6>
+                                <small class="text-primary">PROCESSING</small>
+                            </div>
+                            <p class="mb-1 small">ID: def456 • 5.1 MB</p>
+                            <small>Загружается сейчас...</small>
+                        </div>
+                    `;
+
+                document.getElementById('recentUploads').classList.remove('d-none');
+            }
+
+            // Форматирование даты
+            function formatDate(dateString) {
+                if (!dateString) return 'N/A';
+                const date = new Date(dateString);
+                return date.toLocaleString('ru-RU');
+            }
+
+            // Инициализация
+            document.addEventListener('DOMContentLoaded', function() {
+                // Пытаемся получить ID из URL (если перешли со страницы загрузки)
+                const urlParams = new URLSearchParams(window.location.search);
+                const requestId = urlParams.get('requestId');
+                const clientId = urlParams.get('clientId');
+
+                if (requestId) {
+                    document.getElementById('statusUploadRequestId').value = requestId;
+                }
+
+                if (clientId) {
+                    document.getElementById('statusClientId').value = clientId;
+
+                    // Автоматически проверяем статус, если оба ID есть
+                    if (requestId && clientId) {
+                        setTimeout(() => {
+                            document.getElementById('statusForm').dispatchEvent(new Event('submit'));
+                        }, 500);
+                    }
+                }
+            });
+        </script>
+    </div>
+</div>
+</body>
+</html>

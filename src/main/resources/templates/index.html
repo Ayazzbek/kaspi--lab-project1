@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ru" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="layout :: head"></head>
+<body>
+<div th:replace="layout :: body">
+    <div th:fragment="content">
+        <!-- Заголовок -->
+        <div class="row justify-content-center">
+            <div class="col-md-8 text-center text-white mb-5">
+                <h1 class="display-4 fw-bold mb-3">
+                    <i class="bi bi-cloud-arrow-up-fill"></i>
+                    File Uploader
+                </h1>
+                <p class="lead mb-4">
+                    Профессиональный сервис для асинхронной загрузки файлов<br>
+                    с поддержкой идемпотентности и MinIO хранилищем
+                </p>
+            </div>
+        </div>
+
+        <!-- Карточки возможностей -->
+        <div class="row g-4 mb-5">
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <i class="bi bi-shield-check text-primary" style="font-size: 3rem;"></i>
+                        <h4 class="card-title mt-3">Идемпотентность</h4>
+                        <p class="card-text">
+                            Повторные запросы не создают дубликатов. Один файл — одна загрузка.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <i class="bi bi-lightning-charge-fill text-warning" style="font-size: 3rem;"></i>
+                        <h4 class="card-title mt-3">Асинхронность</h4>
+                        <p class="card-text">
+                            Файлы загружаются в фоне. Получайте статус в реальном времени.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <i class="bi bi-database-check text-success" style="font-size: 3rem;"></i>
+                        <h4 class="card-title mt-3">Консистентность</h4>
+                        <p class="card-text">
+                            Гарантированная целостность данных и компенсирующие транзакции.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Кнопки действий -->
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <h4 class="card-title mb-4">Начать работу</h4>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <a href="/upload" class="btn btn-primary btn-lg w-100">
+                                    <i class="bi bi-upload me-2"></i>
+                                    Загрузить файл
+                                </a>
+                            </div>
+                            <div class="col-md-4">
+                                <a href="/status" class="btn btn-info btn-lg w-100">
+                                    <i class="bi bi-clock-history me-2"></i>
+                                    Проверить статус
+                                </a>
+                            </div>
+                            <div class="col-md-4">
+                                <a href="/download" class="btn btn-success btn-lg w-100">
+                                    <i class="bi bi-download me-2"></i>
+                                    Скачать файл
+                                </a>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <!-- Пример API запроса -->
+                        <h5 class="mb-3">Пример API запроса:</h5>
+                        <div class="api-endpoint mb-3">
+                            POST http://localhost:8080/api/v1/files/upload<br>
+                            Content-Type: multipart/form-data<br>
+                            Параметры: clientId, uploadId, file
+                        </div>
+                        <button class="btn btn-outline-dark" onclick="copyToClipboard('http://localhost:8080/api/v1/files/upload')">
+                            <i class="bi bi-clipboard"></i> Скопировать URL
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Статистика (заглушка) -->
+        <div class="row mt-5">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <i class="bi bi-graph-up me-2"></i>
+                            Статистика системы
+                        </h5>
+                        <div class="row text-center">
+                            <div class="col-md-3">
+                                <h2 class="text-primary">0</h2>
+                                <p class="text-muted">Загрузок сегодня</p>
+                            </div>
+                            <div class="col-md-3">
+                                <h2 class="text-success">0</h2>
+                                <p class="text-muted">Успешных загрузок</p>
+                            </div>
+                            <div class="col-md-3">
+                                <h2 class="text-warning">0</h2>
+                                <p class="text-muted">В обработке</p>
+                            </div>
+                            <div class="col-md-3">
+                                <h2 class="text-info">100 MB</h2>
+                                <p class="text-muted">Макс. размер файла</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Скрипты -->
+    <div th:fragment="scripts">
+        <script>
+            // Обновляем статистику каждые 10 секунд
+            function updateStats() {
+                fetch('/api/v1/files/health')
+                    .then(response => response.text())
+                    .then(data => {
+                        console.log('System health:', data);
+                    })
+                    .catch(error => console.error('Error fetching stats:', error));
+            }
+
+            // Обновляем статистику при загрузке страницы
+            updateStats();
+            setInterval(updateStats, 10000);
+        </script>
+    </div>
+</div>
+</body>
+</html>
