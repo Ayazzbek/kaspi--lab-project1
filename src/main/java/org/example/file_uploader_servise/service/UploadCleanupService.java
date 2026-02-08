@@ -1,10 +1,8 @@
 package org.example.file_uploader_servise.service;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.example.file_uploader_servise.Repository.UploadRequestRepository;
 import org.example.file_uploader_servise.model.UploadRequest;
-import org.example.file_uploader_servise.service.storage.StorageService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -19,10 +17,6 @@ import java.util.List;
 public class UploadCleanupService {
 
     private final UploadRequestRepository uploadRequestRepository;
-    private final StorageService storageService;
-
-    @Value("${storage.s3.bucket}")
-    private String bucket;
 
     @Value("${app.upload.cleanup.stalled-threshold-seconds:1800}")
     private int stalledThresholdSeconds;
@@ -30,11 +24,7 @@ public class UploadCleanupService {
     @Value("${app.upload.cleanup.enabled:true}")
     private boolean cleanupEnabled;
 
-    /**
-     * Очистка зависших загрузок
-     */
-    @Scheduled(fixedDelayString = "${app.upload.cleanup.interval-seconds:300}",
-            timeUnit = java.util.concurrent.TimeUnit.SECONDS)
+    @Scheduled(fixedDelayString = "${app.upload.cleanup.interval-seconds:30000}")
     @Transactional
     public void cleanupStalledUploads() {
         if (!cleanupEnabled) {
@@ -57,7 +47,7 @@ public class UploadCleanupService {
                         stalled.getId(), stalled.getClientId(), stalled.getUpdatedAt(),
                         stalled.getAttemptCount());
 
-                stalled.markFailed("Stalled for more than " + stalledThresholdSeconds + " seconds");
+                stalled.markFailed("Operation stalled - timeout after " + stalledThresholdSeconds + " seconds");
                 uploadRequestRepository.save(stalled);
                 cleanedCount++;
 
@@ -71,7 +61,8 @@ public class UploadCleanupService {
             log.info("Cleaned up {} stalled uploads", cleanedCount);
         }
     }
-    @Scheduled(cron = "0 0 3 * * ?")
+
+    @Scheduled(cron = "${app.upload.cleanup.old-records-cron:0 0 3 * * ?}")
     @Transactional
     public void cleanupOldRecords() {
         if (!cleanupEnabled) {
@@ -88,17 +79,31 @@ public class UploadCleanupService {
         oldRequests.addAll(uploadRequestRepository
                 .findByStatusAndUpdatedAtBefore(UploadRequest.Status.FAILED, threshold));
 
+        int deletedCount = 0;
         for (UploadRequest oldRequest : oldRequests) {
             try {
                 log.info("Removing old upload record: id={}, status={}, updatedAt={}",
                         oldRequest.getId(), oldRequest.getStatus(), oldRequest.getUpdatedAt());
 
                 uploadRequestRepository.delete(oldRequest);
+                deletedCount++;
 
             } catch (Exception e) {
                 log.error("Failed to cleanup old record {}: {}",
                         oldRequest.getId(), e.getMessage(), e);
             }
         }
+
+        if (deletedCount > 0) {
+            log.info("Deleted {} old records", deletedCount);
+        }
+    }
+
+    @Scheduled(cron = "0 0 4 * * ?")
+    public void cleanupTemporaryFiles() {
+        if (!cleanupEnabled) {
+            return;
+        }
+        log.debug("Starting temporary files cleanup");
     }
 }

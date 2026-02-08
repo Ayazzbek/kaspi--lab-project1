@@ -1,5 +1,4 @@
 package org.example.file_uploader_servise.service.storage;
-
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.example.file_uploader_servise.model.FileMetadata;
@@ -20,7 +19,6 @@ import software.amazon.awssdk.services.s3.model.*;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
-import java.time.ZoneId;
 import java.util.Map;
 
 @Slf4j
@@ -29,9 +27,9 @@ import java.util.Map;
 public class MinioStorageService implements StorageService {
 
     private final S3Client s3Client;
+
     private final String endpoint;
     private final String bucket;
-    private final String region;
 
     public MinioStorageService(
             @Value("${storage.s3.endpoint}") String endpoint,
@@ -42,18 +40,17 @@ public class MinioStorageService implements StorageService {
     ) {
         this.endpoint = endpoint;
         this.bucket = bucket;
-        this.region = region;
+
+        AwsBasicCredentials credentials =
+                AwsBasicCredentials.create(accessKey, secretKey);
 
         this.s3Client = S3Client.builder()
                 .endpointOverride(URI.create(endpoint))
-                .credentialsProvider(
-                        StaticCredentialsProvider.create(
-                                AwsBasicCredentials.create(accessKey, secretKey)
-                        )
-                )
+                .credentialsProvider(StaticCredentialsProvider.create(credentials))
                 .region(Region.of(region))
                 .forcePathStyle(true)
                 .build();
+
     }
 
     @PostConstruct
@@ -125,12 +122,11 @@ public class MinioStorageService implements StorageService {
             );
 
             return FileMetadata.StorageInfo.builder()
-                    .provider("minio")
+                    .storageType("minio")
                     .bucket(bucket)
-                    .objectKey(objectKey)
+                    .key(objectKey)
                     .url(endpoint + "/" + bucket + "/" + objectKey)
-                    .etag(response.eTag())
-                    .region(region)
+                    .eTag(response.eTag())
                     .build();
 
         } catch (S3Exception e) {
@@ -138,54 +134,7 @@ public class MinioStorageService implements StorageService {
         }
     }
 
-    @Override
-    public boolean fileExists(String bucket, String objectKey) {
-        try {
-            s3Client.headObject(
-                    HeadObjectRequest.builder()
-                            .bucket(bucket)
-                            .key(objectKey)
-                            .build()
-            );
-            return true;
-        } catch (NoSuchKeyException e) {
-            return false;
-        }
-    }
 
-    @Override
-    public void deleteFile(String bucket, String objectKey) {
-        s3Client.deleteObject(
-                DeleteObjectRequest.builder()
-                        .bucket(bucket)
-                        .key(objectKey)
-                        .build()
-        );
-    }
-
-    @Override
-    public FileMetadata.StorageInfo getFileInfo(String bucket, String objectKey) {
-        HeadObjectResponse response = s3Client.headObject(
-                HeadObjectRequest.builder()
-                        .bucket(bucket)
-                        .key(objectKey)
-                        .build()
-        );
-
-        return FileMetadata.StorageInfo.builder()
-                .provider("minio")
-                .bucket(bucket)
-                .objectKey(objectKey)
-                .url(endpoint + "/" + bucket + "/" + objectKey)
-                .etag(response.eTag())
-                .region(region)
-                .uploadedAt(
-                        response.lastModified()
-                                .atZone(ZoneId.systemDefault())
-                                .toLocalDateTime()
-                )
-                .build();
-    }
 
     @Override
     public Resource downloadFile(String bucket, String objectKey) {
@@ -205,8 +154,6 @@ public class MinioStorageService implements StorageService {
         };
     }
 
-    @Override
-    public String getPresignedUrl(String bucket, String objectKey, int expirationMinutes) {
-        return endpoint + "/" + bucket + "/" + objectKey;
-    }
+
 }
+

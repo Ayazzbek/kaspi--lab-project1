@@ -16,21 +16,10 @@ public interface StorageService {
                                           InputStream inputStream, long size,
                                           String contentType, Map<String, String> metadata);
 
-    boolean fileExists(String bucket, String objectKey);
-
-    void deleteFile(String bucket, String objectKey);
-
-    FileMetadata.StorageInfo getFileInfo(String bucket, String objectKey);
-
     Resource downloadFile(String bucket, String objectKey);
 
-    String getPresignedUrl(String bucket, String objectKey, int expirationMinutes);
 
     class StorageException extends RuntimeException {
-        public StorageException(String message) {
-            super(message);
-        }
-
         public StorageException(String message, Throwable cause) {
             super(message, cause);
         }

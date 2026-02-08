@@ -49,28 +49,6 @@ public class ErrorResponseDto {
                 .build();
     }
 
-    public static ErrorResponseDto notFound(String message, String path) {
-        return ErrorResponseDto.builder()
-                .timestamp(LocalDateTime.now())
-                .status(404)
-                .error("Not Found")
-                .code("NOT_FOUND")
-                .message(message)
-                .path(path)
-                .build();
-    }
-
-    public static ErrorResponseDto forbidden(String message, String path) {
-        return ErrorResponseDto.builder()
-                .timestamp(LocalDateTime.now())
-                .status(403)
-                .error("Forbidden")
-                .code("FORBIDDEN")
-                .message(message)
-                .path(path)
-                .build();
-    }
-
     public static ErrorResponseDto conflict(String message, String path) {
         return ErrorResponseDto.builder()
                 .timestamp(LocalDateTime.now())

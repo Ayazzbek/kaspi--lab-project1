@@ -1,102 +1,87 @@
 package org.example.file_uploader_servise.model;
-
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import org.springframework.data.annotation.CreatedDate;
+import lombok.*;
 import org.springframework.data.annotation.Id;
-import org.springframework.data.annotation.LastModifiedDate;
-import org.springframework.data.annotation.Version;
-import org.springframework.data.mongodb.core.index.CompoundIndex;
-import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.mapping.Field;
 
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
 
+@Document(collection = "upload_requests")
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Document(collection = "upload_requests")
-@CompoundIndex(
-        name = "client_upload_unique",
-        def = "{'clientId': 1, 'uploadId': 1}",
-        unique = true
-)
-@CompoundIndex(
-        name = "status_updated_idx",
-        def = "{'status': 1, 'updatedAt': 1}"
-)
 public class UploadRequest {
 
     @Id
     private String id;
 
-    @Indexed
+    @Field("client_id")
     private String clientId;
 
+    @Field("upload_id")
     private String uploadId;
 
-    @Indexed
+    @Field("original_filename")
+    private String originalFilename;
+
+    @Field("content_type")
+    private String contentType;
+
+    @Field("file_size")
+    private Long fileSize;
+
+    private String checksum;
+    private String error;
+
+    @Field("attempt_count")
+    @Builder.Default
+    private Integer attemptCount = 0;
+
     private Status status;
 
+    @Field("file_metadata_id")
     private String fileMetadataId;
 
-    private String originalFilename;
-    private String contentType;
-    private Long fileSize;
-    private String checksum;
-
-    private Integer attemptCount;
-    private String errorMessage;
-    private Map<String, String> metadata;
-
-    @CreatedDate
+    @Field("created_at")
     private LocalDateTime createdAt;
 
-    @LastModifiedDate
+    @Field("updated_at")
     private LocalDateTime updatedAt;
 
+    @Field("completed_at")
     private LocalDateTime completedAt;
 
-    @Version
-    private Long version;
-
     public enum Status {
-        PENDING,
-        PROCESSING,
-        COMPLETED,
-        FAILED,
-        CANCELLED
+        PENDING, PROCESSING, COMPLETED, FAILED, CANCELLED
     }
 
-    public static UploadRequest create(String clientId, String uploadId, String filename,
-                                       String contentType, long size, String checksum) {
-        return UploadRequest.builder()
-                .clientId(clientId)
-                .uploadId(uploadId)
-                .originalFilename(filename)
-                .contentType(contentType)
-                .fileSize(size)
-                .checksum(checksum)
-                .status(Status.PENDING)
-                .attemptCount(0)
-                .metadata(new HashMap<>())
-                .build();
+    public static UploadRequest create(
+            String clientId,
+            String uploadId,
+            String originalFilename,
+            String contentType,
+            long fileSize,
+            String checksum) {
+
+        UploadRequest request = new UploadRequest();
+        request.clientId = clientId;
+        request.uploadId = uploadId;
+        request.originalFilename = originalFilename;
+        request.contentType = contentType;
+        request.fileSize = fileSize;
+        request.checksum = checksum;
+        request.initialize();
+
+        return request;
     }
 
     public void markProcessing() {
-        validateTransition(Status.PROCESSING);
         this.status = Status.PROCESSING;
-        this.attemptCount = (attemptCount == null ? 0 : attemptCount) + 1;
         this.updatedAt = LocalDateTime.now();
     }
 
     public void markCompleted(String fileMetadataId) {
-        validateTransition(Status.COMPLETED);
         this.status = Status.COMPLETED;
         this.fileMetadataId = fileMetadataId;
         this.completedAt = LocalDateTime.now();
@@ -104,47 +89,35 @@ public class UploadRequest {
     }
 
     public void markFailed(String errorMessage) {
-        validateTransition(Status.FAILED);
         this.status = Status.FAILED;
-        this.errorMessage = errorMessage;
+        this.error = errorMessage;
+        this.attemptCount = (this.attemptCount == null ? 0 : this.attemptCount) + 1;
         this.updatedAt = LocalDateTime.now();
     }
 
-    public void cancel() {
-        validateTransition(Status.CANCELLED);
+    public void markCancelled() {
         this.status = Status.CANCELLED;
         this.updatedAt = LocalDateTime.now();
     }
 
-    private void validateTransition(Status newStatus) {
-        if (!canTransitionTo(newStatus)) {
-            throw new IllegalStateException(
-                    String.format("Invalid state transition from %s to %s", status, newStatus)
-            );
-        }
-    }
-
-    public boolean canTransitionTo(Status newStatus) {
-        return switch (this.status) {
-            case PENDING -> newStatus == Status.PROCESSING ||
-                    newStatus == Status.FAILED ||
-                    newStatus == Status.CANCELLED;
-            case PROCESSING -> newStatus == Status.COMPLETED ||
-                    newStatus == Status.FAILED ||
-                    newStatus == Status.CANCELLED;
-            case COMPLETED, FAILED, CANCELLED -> false;
-        };
-    }
-
     public boolean canRetry() {
-        return this.status == Status.FAILED &&
-                (attemptCount == null || attemptCount < 3);
+        return status == Status.FAILED
+                && (attemptCount == null || attemptCount < 3);
     }
 
-    public void addMetadata(String key, String value) {
-        if (this.metadata == null) {
-            this.metadata = new HashMap<>();
+    public void initialize() {
+        LocalDateTime now = LocalDateTime.now();
+        if (this.createdAt == null) {
+            this.createdAt = now;
         }
-        this.metadata.put(key, value);
+        if (this.updatedAt == null) {
+            this.updatedAt = now;
+        }
+        if (this.status == null) {
+            this.status = Status.PENDING;
+        }
+        if (this.attemptCount == null) {
+            this.attemptCount = 0;
+        }
     }
 }

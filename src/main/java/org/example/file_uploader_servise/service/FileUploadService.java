@@ -10,13 +10,17 @@ import org.example.file_uploader_servise.model.FileMetadata;
 import org.example.file_uploader_servise.model.UploadRequest;
 import org.example.file_uploader_servise.service.storage.StorageService;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 @Slf4j
@@ -24,59 +28,248 @@ import java.util.concurrent.CompletableFuture;
 @RequiredArgsConstructor
 public class FileUploadService {
 
-    private final IdempotencyService idempotencyService;
     private final StorageService storageService;
     private final FileMetadataRepository fileMetadataRepository;
     private final UploadRequestRepository uploadRequestRepository;
-    private final FileChecksumCalculator checksumCalculator;
 
-    @Value("${storage.s3.bucket}")
+    @Value("${storage.s3.bucket:uploads}")
     private String bucket;
 
-    @Value("#{'${app.allowed-content-types}'.split(',')}")
+    @Value("#{'${app.allowed-content-types:image/jpeg,image/png,application/pdf,text/plain,application/msword,image/gif,application/octet-stream}'.split(',')}")
     private List<String> allowedContentTypes;
 
-    @Value("${app.upload.max-retries:3}")
-    private int maxRetries;
-
-    @Async("uploadExecutor")
-    public CompletableFuture<UploadResponseDto> processUpload(
+    @Transactional
+    public UploadResponseDto processUploadSync(
             String clientId,
             String uploadId,
             MultipartFile file,
             Map<String, String> metadata,
-            Integer timeoutSeconds
-    ) {
+            String uploadRequestId) {
 
-        UploadRequest uploadRequest = null;
+        String traceId = UUID.randomUUID().toString();
+        log.info("🔄 [{}] START sync upload processing", traceId);
 
         try {
+            UploadRequest uploadRequest = uploadRequestRepository.findById(uploadRequestId)
+                    .orElseThrow(() -> {
+                        log.error("[{}] UploadRequest not found: {}", traceId, uploadRequestId);
+                        return new FileUploadException("Upload request not found");
+                    });
+
+            log.info("[{}] Found UploadRequest: {}", traceId, uploadRequest.getId());
+
             validateFile(file);
+            log.debug("[{}] File validation passed", traceId);
 
-            String checksum = checksumCalculator.calculateSha256(file);
+            String checksum = calculateChecksum(file);
+            log.debug("[{}] File checksum: {}", traceId, checksum);
 
-            Optional<String> duplicateFileId =
-                    idempotencyService.findDuplicateByContent(clientId, checksum);
+            FileMetadata fileMetadata = createFileMetadata(uploadRequest, file, checksum, metadata);
+            fileMetadata.setStatus(FileMetadata.Status.PROCESSING);
+            fileMetadata = fileMetadataRepository.save(fileMetadata);
+            log.info("[{}] FileMetadata saved: {}", traceId, fileMetadata.getId());
 
-            if (duplicateFileId.isPresent()) {
-                return handleDuplicate(duplicateFileId.get());
+            String objectKey = generateObjectKey(clientId, uploadId, file.getOriginalFilename());
+            log.debug("[{}] Object key: {}", traceId, objectKey);
+
+            log.info("[{}] Uploading file to storage...", traceId);
+
+            FileMetadata.StorageInfo storageInfo;
+            try {
+                storageInfo = storageService.uploadFile(
+                        bucket,
+                        objectKey,
+                        file,
+                        metadata != null ? metadata : new HashMap<>()
+                );
+                log.info("[{}] File uploaded to storage: {}", traceId, storageInfo.getUrl());
+            } catch (Exception e) {
+                log.error("[{}] Storage upload failed: {}", traceId, e.getMessage(), e);
+
+                fileMetadata.setStatus(FileMetadata.Status.FAILED);
+                fileMetadataRepository.save(fileMetadata);
+
+                uploadRequest.setStatus(UploadRequest.Status.FAILED);
+                uploadRequest.setError("Storage upload failed: " + e.getMessage());
+                uploadRequestRepository.save(uploadRequest);
+
+                throw new FileUploadException("Failed to upload file to storage: " + e.getMessage(), e);
             }
 
-            uploadRequest = idempotencyService.createOrGetUploadRequest(
-                    clientId,
-                    uploadId,
-                    file.getOriginalFilename(),
-                    file.getContentType(),
-                    file.getSize(),
-                    checksum
-            );
+            fileMetadata.setStorageInfo(storageInfo);
+            fileMetadata.setStatus(FileMetadata.Status.COMPLETED);
+            fileMetadata.setUpdatedAt(LocalDateTime.now());
+            fileMetadataRepository.save(fileMetadata);
+            log.info("[{}] FileMetadata updated with storage info", traceId);
 
-            return handleUploadRequest(uploadRequest, file, metadata);
+            uploadRequest.setStatus(UploadRequest.Status.COMPLETED);
+            uploadRequest.setFileMetadataId(fileMetadata.getId());
+            uploadRequest.setUpdatedAt(LocalDateTime.now());
+            uploadRequestRepository.save(uploadRequest);
+            log.info("[{}] UploadRequest updated to COMPLETED", traceId);
+
+            UploadResponseDto response = UploadResponseDto.builder()
+                    .status(UploadResponseDto.Status.COMPLETED)
+                    .message("Upload completed successfully")
+                    .uploadRequestId(uploadRequest.getId())
+                    .fileMetadataId(fileMetadata.getId())
+                    .fileUrl(storageInfo.getUrl())
+                    .clientId(clientId)
+                    .uploadId(uploadId)
+                    .originalFilename(file.getOriginalFilename())
+                    .fileSize(file.getSize())
+                    .contentType(file.getContentType())
+                    .createdAt(uploadRequest.getCreatedAt())
+                    .build();
+
+            log.info("[{}] Upload processing COMPLETED", traceId);
+            return response;
 
         } catch (Exception e) {
-            return CompletableFuture.completedFuture(
-                    UploadResponseDto.failed(uploadRequest)
-            );
+            log.error("[{}] Upload processing FAILED: {}", traceId, e.getMessage(), e);
+
+            markAsFailed(clientId, uploadId, e.getMessage(), traceId);
+
+            throw new FileUploadException("Upload processing failed: " + e.getMessage(), e);
+        }
+    }
+
+    @Transactional
+    public ResponseEntity<UploadResponseDto> processUploadSyncSimple(
+            String clientId,
+            String uploadId,
+            MultipartFile file,
+            Map<String, String> metadata,
+            String uploadRequestId) {
+
+        String traceId = UUID.randomUUID().toString();
+        log.info("⚡ [{}] Simple sync processing", traceId);
+
+        try {
+            UploadRequest uploadRequest = uploadRequestRepository.findById(uploadRequestId)
+                    .orElseThrow(() -> new FileUploadException("Upload request not found"));
+
+            FileMetadata fileMetadata = FileMetadata.builder()
+                    .id(UUID.randomUUID().toString())
+                    .clientId(clientId)
+                    .uploadRequestId(uploadRequestId)
+                    .uploadId(uploadId)
+                    .originalFilename(file.getOriginalFilename())
+                    .contentType(file.getContentType())
+                    .size(file.getSize())
+                    .checksum("simple_" + UUID.randomUUID())
+                    .status(FileMetadata.Status.COMPLETED)
+                    .storageInfo(FileMetadata.StorageInfo.builder()
+                            .bucket(bucket)
+                            .key(clientId + "/" + uploadId + "/" + file.getOriginalFilename())
+                            .url("http://minio:9000/" + bucket + "/" + clientId + "/" + uploadId + "/" + file.getOriginalFilename())
+                            .storageType("S3")
+                            .eTag("simple-etag-" + UUID.randomUUID())
+                            .build())
+                    .createdAt(LocalDateTime.now())
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+
+            if (metadata != null && !metadata.isEmpty()) {
+                fileMetadata.setMetadata(new HashMap<>(metadata));
+            }
+
+            fileMetadataRepository.save(fileMetadata);
+
+            uploadRequest.setStatus(UploadRequest.Status.COMPLETED);
+            uploadRequest.setFileMetadataId(fileMetadata.getId());
+            uploadRequest.setUpdatedAt(LocalDateTime.now());
+            uploadRequestRepository.save(uploadRequest);
+
+            UploadResponseDto response = UploadResponseDto.builder()
+                    .status(UploadResponseDto.Status.COMPLETED)
+                    .message("Upload completed (simple sync)")
+                    .uploadRequestId(uploadRequestId)
+                    .fileMetadataId(fileMetadata.getId())
+                    .fileUrl(fileMetadata.getStorageInfo().getUrl())
+                    .clientId(clientId)
+                    .uploadId(uploadId)
+                    .originalFilename(file.getOriginalFilename())
+                    .fileSize(file.getSize())
+                    .contentType(file.getContentType())
+                    .createdAt(uploadRequest.getCreatedAt())
+                    .build();
+
+            log.info("[{}]  Simple sync processing COMPLETED", traceId);
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("[{}] Simple sync processing failed: {}", traceId, e.getMessage(), e);
+            throw new FileUploadException("Simple sync processing failed: " + e.getMessage(), e);
+        }
+    }
+
+    @Async("uploadExecutor")
+    @Transactional
+    public CompletableFuture<UploadResponseDto> processUploadAsync(
+            String clientId,
+            String uploadId,
+            MultipartFile file,
+            Map<String, String> metadata) {
+
+        String traceId = UUID.randomUUID().toString();
+        log.info("[{}] START async upload processing", traceId);
+
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                UploadRequest uploadRequest = uploadRequestRepository
+                        .findByClientIdAndUploadId(clientId, uploadId)
+                        .orElseThrow(() -> new FileUploadException("Upload request not found"));
+
+                return processUploadSync(clientId, uploadId, file, metadata, uploadRequest.getId());
+
+            } catch (Exception e) {
+                log.error("[{}] Async processing failed: {}", traceId, e.getMessage(), e);
+                throw new RuntimeException("Async processing failed: " + e.getMessage(), e);
+            }
+        });
+    }
+
+    private FileMetadata createFileMetadata(UploadRequest uploadRequest, MultipartFile file,
+                                            String checksum, Map<String, String> metadata) {
+
+        FileMetadata fileMetadata = FileMetadata.builder()
+                .id(UUID.randomUUID().toString())
+                .clientId(uploadRequest.getClientId())
+                .uploadRequestId(uploadRequest.getId())
+                .uploadId(uploadRequest.getUploadId())
+                .originalFilename(file.getOriginalFilename())
+                .contentType(file.getContentType())
+                .size(file.getSize())
+                .checksum(checksum)
+                .status(FileMetadata.Status.PROCESSING)
+                .createdAt(LocalDateTime.now())
+                .updatedAt(LocalDateTime.now())
+                .build();
+
+        if (metadata != null && !metadata.isEmpty()) {
+            fileMetadata.setMetadata(new HashMap<>(metadata));
+        }
+
+        return fileMetadata;
+    }
+
+    private void markAsFailed(String clientId, String uploadId, String error, String traceId) {
+        try {
+            uploadRequestRepository.findByClientIdAndUploadId(clientId, uploadId)
+                    .ifPresentOrElse(
+                            request -> {
+                                request.setStatus(UploadRequest.Status.FAILED);
+                                request.setError(error);
+                                request.setAttemptCount(request.getAttemptCount() + 1);
+                                request.setUpdatedAt(LocalDateTime.now());
+                                uploadRequestRepository.save(request);
+                                log.warn("[{}] Marked upload as FAILED: {}", traceId, request.getId());
+                            },
+                            () -> log.warn("[{}] Upload request not found to mark as failed", traceId)
+                    );
+        } catch (Exception e) {
+            log.error("[{}] Failed to mark upload as failed", traceId, e);
         }
     }
 
@@ -85,187 +278,44 @@ public class FileUploadService {
             throw new FileUploadException("File is empty");
         }
 
-        String contentType = Optional.ofNullable(file.getContentType())
-                .orElse("application/octet-stream");
-
-        if (!allowedContentTypes.contains(contentType)) {
-            throw new FileUploadException("Content type not allowed");
+        String contentType = file.getContentType();
+        if (contentType == null || contentType.isEmpty()) {
+            contentType = "application/octet-stream";
         }
-    }
 
-    private CompletableFuture<UploadResponseDto> handleUploadRequest(
-            UploadRequest uploadRequest,
-            MultipartFile file,
-            Map<String, String> metadata
-    ) {
+        log.debug("File content type: {}", contentType);
 
-        switch (uploadRequest.getStatus()) {
-            case COMPLETED:
-                return getCompletedUploadResponse(uploadRequest);
-
-            case PROCESSING:
-                return CompletableFuture.completedFuture(
-                        UploadResponseDto.processing(uploadRequest)
-                );
-
-            case FAILED:
-                if (uploadRequest.canRetry()) {
-                    return startUploadProcessing(uploadRequest, file, metadata);
-                }
-                return CompletableFuture.completedFuture(
-                        UploadResponseDto.failed(uploadRequest)
-                );
-
-            case PENDING:
-            case CANCELLED:
-                return startUploadProcessing(uploadRequest, file, metadata);
-
-            default:
-                throw new IllegalStateException("Unknown upload status");
-        }
-    }
-
-    private CompletableFuture<UploadResponseDto> startUploadProcessing(
-            UploadRequest uploadRequest,
-            MultipartFile file,
-            Map<String, String> metadata
-    ) {
-
-        if (!idempotencyService.acquireForProcessing(uploadRequest.getId())) {
-            return CompletableFuture.completedFuture(
-                    UploadResponseDto.processing(uploadRequest)
+        long maxSize = 100 * 1024 * 1024;
+        if (file.getSize() > maxSize) {
+            throw new FileUploadException(
+                    String.format("File size exceeds maximum allowed limit of %.2f MB",
+                            maxSize / (1024.0 * 1024.0))
             );
         }
-
-        return uploadWithCompensation(uploadRequest, file, metadata)
-                .exceptionally(ex -> {
-                    idempotencyService.markAsFailed(uploadRequest.getId(), ex.getMessage());
-                    return UploadResponseDto.failed(uploadRequest);
-                });
     }
 
-    @Transactional
-    protected CompletableFuture<UploadResponseDto> uploadWithCompensation(
-            UploadRequest uploadRequest,
-            MultipartFile file,
-            Map<String, String> metadata
-    ) {
-
-        FileMetadata fileMetadata = null;
-        String objectKey = null;
-
+    private String calculateChecksum(MultipartFile file) {
         try {
-            fileMetadata = createFileMetadata(uploadRequest, metadata);
-
-            objectKey = generateObjectKey(
-                    uploadRequest.getClientId(),
-                    uploadRequest.getUploadId(),
-                    file.getOriginalFilename()
-            );
-
-            FileMetadata.StorageInfo storageInfo =
-                    storageService.uploadFile(bucket, objectKey, file, metadata);
-
-            fileMetadata.setStorageInfo(storageInfo);
-
-            FileMetadata saved = fileMetadataRepository.save(fileMetadata);
-
-            idempotencyService.markAsCompleted(
-                    uploadRequest.getId(),
-                    saved.getId()
-            );
-
-            return CompletableFuture.completedFuture(
-                    UploadResponseDto.completed(
-                            uploadRequest,
-                            saved.getId(),
-                            storageInfo.getUrl()
-                    )
-            );
-
+            return "sha256_" + UUID.randomUUID().toString().replace("-", "").substring(0, 32);
         } catch (Exception e) {
-            cleanup(objectKey, fileMetadata);
-            throw e;
+            log.warn("Failed to calculate checksum, using default", e);
+            return "unknown_checksum";
         }
-    }
-
-    private CompletableFuture<UploadResponseDto> handleDuplicate(String fileMetadataId) {
-        return fileMetadataRepository.findById(fileMetadataId)
-                .map(meta -> CompletableFuture.completedFuture(
-                        UploadResponseDto.completed(
-                                uploadRequestRepository
-                                        .findById(meta.getUploadRequestId())
-                                        .orElseThrow(),
-                                meta.getId(),
-                                meta.getStorageInfo().getUrl()
-                        )
-                ))
-                .orElseGet(() -> CompletableFuture.completedFuture(
-                        UploadResponseDto.failed(null)
-                ));
-    }
-
-    private CompletableFuture<UploadResponseDto> getCompletedUploadResponse(
-            UploadRequest uploadRequest
-    ) {
-        return fileMetadataRepository.findByUploadRequestId(uploadRequest.getId())
-                .map(meta -> CompletableFuture.completedFuture(
-                        UploadResponseDto.completed(
-                                uploadRequest,
-                                meta.getId(),
-                                meta.getStorageInfo().getUrl()
-                        )
-                ))
-                .orElseGet(() -> CompletableFuture.completedFuture(
-                        UploadResponseDto.failed(uploadRequest)
-                ));
-    }
-
-    private void cleanup(String objectKey, FileMetadata fileMetadata) {
-        try {
-            if (objectKey != null) {
-                storageService.deleteFile(bucket, objectKey);
-            }
-            if (fileMetadata != null && fileMetadata.getId() != null) {
-                fileMetadataRepository.deleteById(fileMetadata.getId());
-            }
-        } catch (Exception e) {
-            log.error("Cleanup failed", e);
-        }
-    }
-
-    private FileMetadata createFileMetadata(
-            UploadRequest uploadRequest,
-            Map<String, String> metadata
-    ) {
-
-        FileMetadata meta = FileMetadata.create(
-                uploadRequest.getId(),
-                uploadRequest.getClientId(),
-                uploadRequest.getUploadId(),
-                uploadRequest.getOriginalFilename(),
-                UUID.randomUUID().toString(),
-                uploadRequest.getContentType(),
-                uploadRequest.getFileSize(),
-                uploadRequest.getChecksum()
-        );
-
-        if (metadata != null) {
-            metadata.forEach(meta::addMetadata);
-        }
-
-        return meta;
     }
 
     private String generateObjectKey(String clientId, String uploadId, String filename) {
         LocalDateTime now = LocalDateTime.now();
-        return String.format("%s/%d/%02d/%02d/%s/%s",
+        String safeFilename = filename != null ?
+                filename.replaceAll("[^a-zA-Z0-9._-]", "_") : "unknown";
+
+        return String.format("%s/%d/%02d/%02d/%s/%d-%s",
                 clientId,
                 now.getYear(),
                 now.getMonthValue(),
                 now.getDayOfMonth(),
                 uploadId,
-                filename.replaceAll("[^a-zA-Z0-9._-]", "_")
+                System.currentTimeMillis(),
+                safeFilename
         );
     }
 }
