@@ -7,7 +7,8 @@ services:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
-    command: mongod --bind_ip_all
+    environment:
+      - MONGO_INITDB_DATABASE=file_uploader_bd
     networks:
       - file-uploader-network
 
@@ -38,7 +39,7 @@ services:
       - minio
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/file_uploader
+      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/file_uploader_bd
       STORAGE_S3_ENDPOINT: http://minio:9000
       STORAGE_S3_ACCESS_KEY: minioadmin
       STORAGE_S3_SECRET_KEY: minioadmin123
