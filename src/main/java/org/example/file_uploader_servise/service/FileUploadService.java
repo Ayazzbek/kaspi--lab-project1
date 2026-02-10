@@ -2,7 +2,7 @@ package org.example.file_uploader_servise.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.example.file_uploader_servise.Dto.UploadResponseDto;
+import org.example.file_uploader_servise.Dto.UploadRequestDto;
 import org.example.file_uploader_servise.Repository.FileMetadataRepository;
 import org.example.file_uploader_servise.Repository.UploadRequestRepository;
 import org.example.file_uploader_servise.exception.FileUploadException;
@@ -33,7 +33,7 @@ public class FileUploadService {
     private String bucket;
 
     @Transactional
-    public UploadResponseDto upload(
+    public UploadRequestDto upload(
             String clientId,
             String uploadId,
             MultipartFile file,
@@ -45,6 +45,11 @@ public class FileUploadService {
 
         UploadRequest uploadRequest = uploadRequestRepository.findById(uploadRequestId)
                 .orElseThrow(() -> new FileUploadException("UploadRequest not found: " + uploadRequestId));
+
+        uploadRequest.setStatus(UploadRequest.Status.PROCESSING);
+        uploadRequest.setUpdatedAt(LocalDateTime.now());
+        uploadRequestRepository.save(uploadRequest);
+
 
         try {
             validateFile(file);
@@ -132,13 +137,13 @@ public class FileUploadService {
         uploadRequestRepository.save(uploadRequest);
     }
 
-    private UploadResponseDto buildSuccessResponse(
+    private UploadRequestDto buildSuccessResponse(
             UploadRequest uploadRequest,
             FileMetadata fileMetadata
     ) {
 
-        return UploadResponseDto.builder()
-                .status(UploadResponseDto.Status.COMPLETED)
+        return UploadRequestDto.builder()
+                .status(UploadRequestDto.Status.COMPLETED)
                 .message("Upload completed successfully")
                 .uploadRequestId(uploadRequest.getId())
                 .fileMetadataId(fileMetadata.getId())
@@ -167,7 +172,7 @@ public class FileUploadService {
     }
 
     @Async("uploadExecutor")
-    public UploadResponseDto processUploadSync(
+    public UploadRequestDto processUploadSync(
             String clientId,
             String uploadId,
             MultipartFile file,

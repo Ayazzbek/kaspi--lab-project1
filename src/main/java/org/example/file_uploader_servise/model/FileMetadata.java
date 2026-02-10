@@ -39,7 +39,6 @@ public class FileMetadata {
     @Field("storage_info")
     private StorageInfo storageInfo;
 
-    // Добавьте поле статуса!
     @Field("status")
     @Builder.Default
     private Status status = Status.PENDING;
@@ -61,7 +60,6 @@ public class FileMetadata {
         metadata.put(key, value);
     }
 
-    // Enum для статусов
     public enum Status {
         PENDING,
         PROCESSING,

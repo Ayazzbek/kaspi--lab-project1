@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class UploadResponseDto {
+public class UploadRequestDto {
 
     private Status status;
     private String message;
@@ -26,8 +26,8 @@ public class UploadResponseDto {
         PROCESSING, COMPLETED, FAILED, CANCELLED
     }
 
-    public static UploadResponseDto processing(UploadRequest request) {
-        return UploadResponseDto.builder()
+    public static UploadRequestDto processing(UploadRequest request) {
+        return UploadRequestDto.builder()
                 .status(Status.PROCESSING)
                 .uploadRequestId(request.getId())
                 .clientId(request.getClientId())
@@ -38,8 +38,8 @@ public class UploadResponseDto {
                 .build();
     }
 
-    public static UploadResponseDto completed(UploadRequest request, String fileMetadataId, String fileUrl) {
-        return UploadResponseDto.builder()
+    public static UploadRequestDto completed(UploadRequest request, String fileMetadataId, String fileUrl) {
+        return UploadRequestDto.builder()
                 .status(Status.COMPLETED)
                 .uploadRequestId(request.getId())
                 .fileMetadataId(fileMetadataId)
@@ -53,8 +53,8 @@ public class UploadResponseDto {
                 .build();
     }
 
-    public static UploadResponseDto failed(UploadRequest request) {
-        return UploadResponseDto.builder()
+    public static UploadRequestDto failed(UploadRequest request) {
+        return UploadRequestDto.builder()
                 .status(Status.FAILED)
                 .uploadRequestId(request.getId())
                 .clientId(request.getClientId())

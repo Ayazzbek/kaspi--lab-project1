@@ -7,7 +7,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.example.file_uploader_servise.Dto.UploadResponseDto;
+import org.example.file_uploader_servise.Dto.UploadRequestDto;
 import org.example.file_uploader_servise.Repository.FileMetadataRepository;
 import org.example.file_uploader_servise.Repository.UploadRequestRepository;
 import org.example.file_uploader_servise.exception.FileUploadException;
@@ -46,12 +46,12 @@ public class FileUploadController {
     )
     @ApiResponses({
             @ApiResponse(responseCode = "202", description = "Запрос принят",
-                    content = @Content(schema = @Schema(implementation = UploadResponseDto.class))),
+                    content = @Content(schema = @Schema(implementation = UploadRequestDto.class))),
             @ApiResponse(responseCode = "400", description = "Неверный запрос"),
             @ApiResponse(responseCode = "413", description = "Файл слишком большой"),
             @ApiResponse(responseCode = "500", description = "Ошибка сервера")
     })
-    public ResponseEntity<UploadResponseDto> uploadFile(
+    public ResponseEntity<UploadRequestDto> uploadFile(
             @RequestParam String clientId,
             @RequestParam String uploadId,
             @RequestParam MultipartFile file,
@@ -86,7 +86,7 @@ public class FileUploadController {
                             .build()
             );
 
-            UploadResponseDto response =
+            UploadRequestDto response =
                     fileUploadService.processUploadSync(clientId, uploadId, file, metadata, request.getId());
 
             return ResponseEntity.accepted().body(response);
@@ -102,7 +102,7 @@ public class FileUploadController {
 
     @GetMapping("/{uploadRequestId}")
     @Operation(summary = "Получить статус загрузки")
-    public ResponseEntity<UploadResponseDto> getUploadInfo(
+    public ResponseEntity<UploadRequestDto> getUploadInfo(
             @PathVariable String uploadRequestId,
             @RequestParam String clientId
     ) {
@@ -176,7 +176,7 @@ public class FileUploadController {
         }
     }
 
-    private ResponseEntity<UploadResponseDto> handleExistingRequest(UploadRequest request) {
+    private ResponseEntity<UploadRequestDto> handleExistingRequest(UploadRequest request) {
         return switch (request.getStatus()) {
             case COMPLETED -> buildCompletedResponse(request);
             case CANCELLED -> ResponseEntity.ok(buildCancelledResponse(request));
@@ -185,14 +185,14 @@ public class FileUploadController {
         };
     }
 
-    private ResponseEntity<UploadResponseDto> buildCompletedResponse(UploadRequest request) {
+    private ResponseEntity<UploadRequestDto> buildCompletedResponse(UploadRequest request) {
         FileMetadata metadata = fileMetadataRepository.findById(request.getFileMetadataId())
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.INTERNAL_SERVER_ERROR, "File metadata not found"));
 
         return ResponseEntity.ok(
-                UploadResponseDto.builder()
-                        .status(UploadResponseDto.Status.COMPLETED)
+                UploadRequestDto.builder()
+                        .status(UploadRequestDto.Status.COMPLETED)
                         .message("Upload completed")
                         .uploadRequestId(request.getId())
                         .clientId(request.getClientId())
@@ -207,9 +207,9 @@ public class FileUploadController {
         );
     }
 
-    private UploadResponseDto buildProcessingResponse(UploadRequest request) {
-        return UploadResponseDto.builder()
-                .status(UploadResponseDto.Status.PROCESSING)
+    private UploadRequestDto buildProcessingResponse(UploadRequest request) {
+        return UploadRequestDto.builder()
+                .status(UploadRequestDto.Status.PROCESSING)
                 .message("Upload in progress")
                 .uploadRequestId(request.getId())
                 .clientId(request.getClientId())
@@ -221,9 +221,9 @@ public class FileUploadController {
                 .build();
     }
 
-    private UploadResponseDto buildFailedResponse(UploadRequest request) {
-        return UploadResponseDto.builder()
-                .status(UploadResponseDto.Status.FAILED)
+    private UploadRequestDto buildFailedResponse(UploadRequest request) {
+        return UploadRequestDto.builder()
+                .status(UploadRequestDto.Status.FAILED)
                 .message(request.getError() != null ? request.getError() : "Upload failed")
                 .uploadRequestId(request.getId())
                 .clientId(request.getClientId())
@@ -231,9 +231,9 @@ public class FileUploadController {
                 .build();
     }
 
-    private UploadResponseDto buildCancelledResponse(UploadRequest request) {
-        return UploadResponseDto.builder()
-                .status(UploadResponseDto.Status.CANCELLED)
+    private UploadRequestDto buildCancelledResponse(UploadRequest request) {
+        return UploadRequestDto.builder()
+                .status(UploadRequestDto.Status.CANCELLED)
                 .message("Upload cancelled")
                 .uploadRequestId(request.getId())
                 .clientId(request.getClientId())
